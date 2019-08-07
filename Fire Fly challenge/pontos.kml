@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Schema name="Pontos_Limpa_e_Aduba" id="Pontos_Limpa_e_Aduba">
+	<SimpleField name="fid" type="float"></SimpleField>
+	<SimpleField name="Campo_1" type="string"></SimpleField>
+	<SimpleField name="Campo_2" type="string"></SimpleField>
+	<SimpleField name="Campo_3" type="string"></SimpleField>
+</Schema>
+<Folder><name>Pontos_Limpa_e_Aduba</name>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#Pontos_Limpa_e_Aduba">
+		<SimpleData name="fid">0</SimpleData>
+		<SimpleData name="Campo_1">Parcela Celpa</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>-8.28804522027932,39.5163686134751,-4.23556193709373e-05</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#Pontos_Limpa_e_Aduba">
+		<SimpleData name="fid">0</SimpleData>
+		<SimpleData name="Campo_1">Parcela máquina</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>-8.35228821493079,39.4993879671288,-4.23258170485497e-05</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#Pontos_Limpa_e_Aduba">
+		<SimpleData name="fid">136</SimpleData>
+		<SimpleData name="Campo_1">Ponto 1</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>-8.28983830104723,39.5087408638971,-4.23407182097435e-05</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#Pontos_Limpa_e_Aduba">
+		<SimpleData name="fid">137</SimpleData>
+		<SimpleData name="Campo_1">Ponto 2</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>-8.28952026480008,39.5038118788291,-4.23332676291466e-05</coordinates></Point>
+  </Placemark>
+  <Placemark>
+	<ExtendedData><SchemaData schemaUrl="#Pontos_Limpa_e_Aduba">
+		<SimpleData name="fid">138</SimpleData>
+		<SimpleData name="Campo_1">Ponto 3</SimpleData>
+	</SchemaData></ExtendedData>
+      <Point><coordinates>-8.2821653114519,39.4959382361797,-4.23183664679527e-05</coordinates></Point>
+  </Placemark>
+</Folder>
+</Document></kml>

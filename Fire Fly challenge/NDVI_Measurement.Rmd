@@ -1,0 +1,156 @@
+---
+title: "Measuring NDVI"
+author: "Omar Nooreddin"
+date: "27/05/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning=FALSE)
+```
+##1. Load Required Packages
+Load the packages that will be used in this analysis:
+```{r loadpackages, message=FALSE, warning=FALSE}
+#Required to convert jp2 to tif
+require(gdalUtils)
+
+#Need to read tif as raster
+require(raster)
+
+#Required for doing transformation and reading KML
+require(sf)
+```
+
+##2. Converting Sentinel Images from JP2 to TIF
+Due to raster package in R not supporting jp2000, the downloaded sentinel images were converted to tif.
+
+Band 4 (red) and band 8 (NIR) were converted since they're ones that will be used to calculate the NDVI.
+
+The downloaded images were for 25-05-2019
+```{r convtif, message=FALSE, warning=FALSE}
+#Convert red image
+gdal_translate("S2A_MSIL1C_20190525T112121_N0207_R037_T29SND_20190525T132011.SAFE/GRANULE/L1C_T29SND_A020483_20190525T112609/IMG_DATA/T29SND_20190525T112121_B04.jp2", "B04.tif")
+
+#Convert NIR image
+gdal_translate("S2A_MSIL1C_20190525T112121_N0207_R037_T29SND_20190525T132011.SAFE/GRANULE/L1C_T29SND_A020483_20190525T112609/IMG_DATA/T29SND_20190525T112121_B08.jp2", "B08.tif")
+```
+
+##3. Read TIF as Raster
+To manipulate and extract information, the tif files are read as raster objects in R:
+```{r readtif}
+#Read red image
+imgred4<-raster("B04.tif")
+
+#Read NIR image
+imgnir8<-raster("B08.tif")
+```
+
+In order to visualise what we're dealing with, we'll plot both images:
+```{r plotimages}
+plot(imgred4, main="Red Band - band 4")
+
+plot(imgnir8, main="NIR Band - band 8")
+```
+
+##4. Compute and Create NDVI Image:
+As per definition, the NDVI is:
+
+$$NDVI=\frac{NIR-Red}{NIR+Red}$$
+
+Now we'll create an NDVI image and plot it:
+```{r NDVI}
+#Calculate NDVI and plot it
+ndvi<-(imgnir8-imgred4)/(imgnir8+imgred4)
+
+plot(ndvi, main="NDVI image")
+```
+
+##5. Import KML File
+To pin point the areas in question, the KML file will be used to read the coordinates:
+```{r readKML}
+#Read KML file
+kmlpoints<-st_read("pontos.kml")
+
+#Show points in quesion
+kmlpoints$geometry
+```
+
+##6. Convert Projections into UTM
+If we inspect the KML file, we'll see that it uses a "latlong" projection, as per above's output.
+
+While the Sentinel 2 images use a UTM projection, as per below:
+```{r utmproj}
+ndvi
+```
+
+As such to extract the pixels from the correct coordinates we're going to:
+
+- Extract the cooredinates from the KML file (I will do this step manually for easiness)
+- Convert them into a UTM projection
+
+```{r convertcoord}
+#Extract coordinates from KML and create a dataframe
+xy<-data.frame(x=c(-8.288045, -8.352288, -8.289838, -8.28952, -8.282165), 
+               y=c( 39.51637,  39.49939,  39.50874,  39.50381, 39.49594 ))
+
+#Convert projection of these points from latlong to UTM
+coordinates(xy) <- c("x", "y")
+proj4string(xy) <- CRS("+proj=longlat +datum=WGS84")
+utmcoord <- spTransform(xy, CRS("+proj=utm +zone=29 ellps=WGS84"))
+utmcoord
+```
+
+And just to confirm that these points are indeed present in the image we downloaded, we'll plot the NDVI image with the points superimposed on them:
+```{r test}
+#Plot NDVI and add points of interest
+plot(ndvi)
+points(utmcoord)
+```
+
+##7. Extract NDVI Values for Points of Interest
+Using the converted coordinates, we'll extract the NDVI values of these points:
+```{r extract}
+ndvi25MAY<-extract(ndvi, utmcoord)
+ndvi25MAY
+```
+
+The above shows NDVI values for each provided coordinates, in the same order. i.e 1st element is point 1, 2nd element is point 2 etc...
+
+##8. Calculating the Change
+We'll repeat the above steps but for images taken on the 15th of May, and compare it with images taken on the 25th of May (they seem to have skipped the 20th!):
+```{r ndvi15}
+#Convert red image
+gdal_translate("S2A_MSIL1C_20190515T112121_N0207_R037_T29SND_20190515T132120.SAFE/GRANULE/L1C_T29SND_A020340_20190515T113007/IMG_DATA/T29SND_20190515T112121_B04.jp2", "B04-1505.tif")
+
+#Convert NIR image
+gdal_translate("S2A_MSIL1C_20190515T112121_N0207_R037_T29SND_20190515T132120.SAFE/GRANULE/L1C_T29SND_A020340_20190515T113007/IMG_DATA/T29SND_20190515T112121_B08.jp2", "B08-1505.tif")
+
+#Read red image
+imgred4_15may<-raster("B04-1505.tif")
+
+#Read NIR image
+imgnir8_15may<-raster("B08-1505.tif")
+
+#Calculate NDVI
+ndvi_15may<-(imgnir8_15may - imgred4_15may)/(imgnir8_15may + imgred4_15may)
+
+#Extract
+ndvi15MAY<-extract(ndvi_15may, utmcoord)
+ndvi15MAY
+```
+
+Having calculated the NDVI 10 days earlier on the 15th of May, we now can compare with the 25th of May and see whether the index has increased or decreased for each point.
+
+```{r seedifference}
+((ndvi25MAY-ndvi15MAY)/ndvi15MAY)*100
+```
+
+From the above, we can see if the vegetation has decreased (-ve change) or increased (+ve change) for each coordinate:
+
+Area | Change
+-----|-------
+1|+ve
+2|-ve
+3|+ve
+4|-ve
+5|-ve
