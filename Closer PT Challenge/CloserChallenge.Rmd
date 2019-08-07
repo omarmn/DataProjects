@@ -1,0 +1,518 @@
+---
+title: "Closer Challenge"
+author: "Omar Nooreddin"
+date: "22/4/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+#0. Executive Summary
+This paper sets out to address three challenges posed by Closer, based on the corpus of complaints provided:
+
+- Create an automatic classifier for new complaints received
+- Create a new set of categorisations for complaints
+- Find similar complaints given a complaint
+
+The first two challenges are set out here in this document, but due to time constraints the third was not attempted.
+
+For the first challenge, Naive Bayes and SVM algorithms were used to classify complaints, though the desired accuracy levels weren't achieved. This is most likely, due to a reduced data set size, hence a reduction in accuracy. Principle Component Analysis could have been used to achieve better results, but a deeper explanation is provided in the Conclusion section as to why it wasn't attempted.
+
+#1. Introduction
+This paper will endeavour to address the challenges put forth in the Closer Challenge. These challenges are:
+
+- Create a content classifier for complaints received
+- Provide a second opinion on the classification of complaints
+
+As part of the challenge, a corpus of customer complaints is provided, and this will be the basis for the analysis.
+
+#2. Intialisation and Loading Data
+Before starting the analysis, a few initialisation steps must be done.
+
+###2.1 Loading Required Packages
+The required packages necessary for this analysis will be loaded (silently to avoid loading logs):
+```{r loadpackages, message=FALSE, warning=FALSE}
+#TM package require for text manipulation and generating Document Term Matrix
+require(tm)
+
+#dplyr for manipulating data frames
+require(dplyr)
+
+#caret for partitioning data into test and train sets
+require(caret)
+
+#e1071 for using SVM and Naivebaye's algorithms used for supervised learning
+require(e1071)
+
+#topicmodels contains LDA algorithm for unsupervised learning
+require(topicmodels)
+
+#Used to extract data from LDA model
+require(tidytext)
+
+#Used to plot topics from LDA
+require(ggrepel)
+```
+
+###2.2 Setting seed
+To ensure analysis is repeatable and attain the same result, a seed will be set manually:
+```{r setseed}
+set.seed(475)
+```
+
+###2.3 Loading Data
+The complaints corpus provided in CSV is loaded:
+```{r readingCSV}
+data<-read.csv("complains_data.csv")
+```
+Following data loading, the required columns are extracted, which are:
+
+- `Consumer.complaint.narrative` which contains customer complaints provided by ACME; and will form the basis for the corpus to be analysed.
+- `Issue` which contains the issue behind the complaints, as classified by ACME analysts; and will be treated as the response/target variable when conducting supervised learning.
+```{r extractColumns}
+#Extract the aforementioned columns and create a new data frame
+corpus<-data.frame(complaint=data$Consumer.complaint.narrative, issue_tv=data$Issue)
+
+#Coerce columns into characers
+corpus$complaint<-as.character(corpus$complaint)
+corpus$issue_tv<-as.character(corpus$issue_tv)
+```
+Now we have a data frame containing customer complaints and their corresponding issue.
+
+#3. Balancing Data
+**Goal:** Make sure the train and test data sets contain equal (on average) representation of each target variable.
+
+**Why:** In order to avoid overfitting for one type of target variable and classify poorly on other target variables, we balance our to have equal representation of each target variable.
+
+**Process:** There are 161 issues. If we plot number of complaints for each issue, we can see that the data is heavily skewed (imbalanced):
+```{r countbyissue}
+#Count complainst by issue
+countbyissue<-aggregate(corpus$issue_tv, by=list(corpus$issue_tv), length)
+
+#Give data frame meaniful names
+colnames(countbyissue)<-c("issue","count")
+
+#Order data in descending order
+countbyissue<-countbyissue[order(-countbyissue$count),]
+
+#Create a bar plot
+barplot(countbyissue$count, main = "Count of Each Issue", col="blue")
+```
+
+***Note:*** *X-axis labels were left out due to lack of legibility if added, also the point from the plot is to show the distribution of counts in the figure above.*
+
+**Strategy for balancing:** In order to balance the data the, following steps were taken (rationale behind strategy is explained after):
+
+**1.** Scan the Count by Issue (arranged in descending order) table till we find the point where cumulative sum of issues accounts for 99% of complaints:
+```{r 99perissue}
+sum(countbyissue$count[1:100])/sum(countbyissue$count)
+```
+
+**2.** Read out the count of issues for that particular issue
+```{r readpoint}
+countbyissue$count[100]
+```
+
+**3.** Any issue count with a count below 151 will now be grouped into "other" column
+```{r createOther}
+#Create a lookup table for issues are below the 100th issue
+lookup<-as.character(countbyissue$issue[101:161])
+
+#Loop through those issues and replace with "other" as issue
+for(i in 1: nrow(corpus)){
+  if(corpus$issue_tv[i] %in% lookup){
+    corpus$issue_tv[i]<-"other"
+  }
+}
+```
+
+**4.** By doing step 3, we now insured that the minimum number of complaints per issue is 151, now we can sample 151 complaints for each issue 
+```{r sampleIssues}
+#Sample 151 complaints from each issue
+corpus <- corpus %>% group_by(issue_tv) %>% sample_n(151)
+
+#Convertfrom dplyr to data frame
+corpus <- ungroup(corpus) %>% as.data.frame()
+```
+
+**5.** Plot the distribution of the new balanced complaints, to confirm we have a balanced data set:
+```{r balancedDataPlot}
+#Count complainst by issue
+countbyissue<-aggregate(corpus$issue_tv, by=list(corpus$issue_tv), length)
+
+#Give data frame meaniful names
+colnames(countbyissue)<-c("issue","count")
+
+#Order data in descending order
+countbyissue<-countbyissue[order(-countbyissue$count),]
+
+#Create a bar plot
+barplot(countbyissue$count, main = "Count of Each Issue(after balancing)", col="blue")
+```
+
+Now we have balanced data set that we can use for training & testing purposes.
+
+**Rationale:**The reasons behind this strategy is as follows:
+
+* In order not to loose to many categories/issues, we have opted to account for 99% of complaints to ensure most scenarios were covered.
+
+* The second rationale was mainly due to processing times, where if the cutoff point was selected at 95%, this would resulted at sampling 659 complaints per target variable, which would resulted in approximately 46,000+ samples (this has taken 1.5 hours to run, proving ineffective for experimentation). While selecting a cutoff at 99% of complaints resulted in 15,000+ samples, which reduced processing significantly (down to 10 min +/-). Ideally a bigger training set would've been used to improve accuracy of model, and indeed the results have shown this shortcomings, and it affected results. More on this in later sections. 
+
+#4. Data Pre-processing
+**Goal:** To prepare and clean the data for training purposes.
+
+**Why:** The data set, or complaints narrative in this case, contains a lot of data/words that will not add value to the analysis and may hamper it, such as punctuation. Therefore, the data will be cleaned to improve its quality in the hopes to produce better results and also reducing its size, as a desired side effect.
+
+**Process:** We will perform the following on the complaints narrative:
+
+- Convert all letters to lower case
+- Remove numbers
+- Remove punctuation
+- Remove instance of "XXXX" and "XX", where it was used to mask dates
+- Remove escape characters: `\n` and `\t`
+- Strip extra white spaces
+- Remove Stopwords, e.g: "to", "me", "very"....
+
+***Note:*** *Word stemming was considered, but due to the loss of legibility and minimal improvement on results, it was decided against.*
+
+```{r cleanData, warning=FALSE}
+#Convert letters to lower case
+corpus$complaint<-tolower(corpus$complaint)
+
+#Remove Numbers
+corpus$complaint<-removeNumbers(corpus$complaint)
+
+#Remove Punctuation
+corpus$complaint<-removePunctuation(corpus$complaint)
+
+#Create a function that will take a pattern and remove it
+findremove<- function (pattern, object) { gsub(pattern, "", object)}
+
+#Remove xxxx
+corpus$complaint<-findremove("xxxx", corpus$complaint)
+
+#Remove xx
+corpus$complaint<-findremove("xx", corpus$complaint)
+
+#Remove \n
+corpus$complaint<-findremove("\n", corpus$complaint)
+
+#Remove \t
+corpus$complaint<-findremove("\t", corpus$complaint)
+
+#Strip extra white spaces
+corpus$complaint<-stripWhitespace(corpus$complaint)
+
+#Convert complaints into a Corpus using tm package
+complaintCorpus<-Corpus(VectorSource(corpus$complaint))
+
+#Remove Stopwords
+complaintCorpus<-tm_map(complaintCorpus, removeWords, stopwords())
+
+#Stemming words
+#corpus$complaint<-stemDocument(corpus$complaint)
+```
+
+#5. Feature Creation (Document Term Matrix) & Further Pre-processing
+
+###5.1 Document Term Matrix
+**Goal:** Create features to be consumed by the machine learning algorithms, to be used in training.
+
+**Why:** In order for data to be used by the algorithm, we need to create a set features that can be fed into the algorithm. In this case it's Document Term Matrix (DTM)
+
+**Process:** The "tm" package will be used to create a DTM, each complaint will be a "document" occupying a row, each "term" will be a column name, and the counts of each term per document will be the values of the matrix:
+```{r dtm}
+#Create DTM using TM
+dtm<-DocumentTermMatrix(complaintCorpus)
+
+#View the DTM
+inspect(dtm)
+```
+
+###5.2 Further Pre-processing
+After creating our DTM, we can visualise the terms a bit better which will aid us in further pre-processing. If we consider the top 100 most popular terms:
+```{r top100}
+#Sum each term across all documents (i.e column sum)
+cumulativeAllTerms<-colSums(as.matrix(dtm))
+
+#Sort in descending order
+cumulativeAllTerms<-cumulativeAllTerms[order(-cumulativeAllTerms)]
+
+#Show top 100 terms
+head(cumulativeAllTerms, 100)
+```
+It can be noted, that there are more terms that don't add value that are not included in the "tm" package stopword list. For example: "can", "just", "however" etc...
+
+Based on the 100 most popular term, other deemed unnecessary terms were selected & removed, and a new DTM is created:
+```{r removeOtherWords, warning=FALSE}
+#Create my list of stopwords
+otherstopwords<-c("told","called","back","can","will","get","said","never","also",
+                  "even","just","know","another","like","want","went","please","take",
+                  "however","going","see","got","several","able")
+
+#Remove custom stopwords
+complaintCorpus<-tm_map(complaintCorpus, removeWords, otherstopwords)
+
+#Create a new DTM
+dtm<-DocumentTermMatrix(complaintCorpus)
+```
+
+###5.3 Even Further Pre-processing (Sparsity)
+To enhance the quality of the data even further and reduce our data set size, sparse terms that appear less than times 10 were removed:
+```{r removeSparse}
+#Find terms that appear 10 times or more
+freqterms<-findFreqTerms(dtm, lowfreq = 10)
+
+#Limit DTM to contain terms that appear >= 10
+dtm<-DocumentTermMatrix(complaintCorpus, list(dictionary=freqterms))
+inspect(dtm)
+```
+It can be noted that sparsity has dropped as a result, albeit marginally. Below is a plot of the 30 common terms:
+```{r plotFreqTerms, fig.height=7}
+#Sum count of each term across all documents
+cumulativeAllTerms<-colSums(as.matrix(dtm))
+
+#Sort in descending order and take top 30 terms
+Top30<-head(cumulativeAllTerms[order(-cumulativeAllTerms)], 30)
+
+#Convert to data frame
+Top30<-data.frame(term=names(Top30), count=Top30)
+Top30<-Top30[order(-Top30$count),]
+
+#Plot
+barplot(rev(Top30$count), horiz = T, names.arg = Top30$term, las=2, col="blue", main="Most Frequent 30 Terms")
+```
+
+#6. Creating Train and Test Sets
+**Goal:** Split data into training (75%) and test (25%) sets.
+
+**Why:** To avoid overfitting with the data at hand, the data is split into training (used to train the model), and test that model didn't see, which then can be validated against. 
+
+**Process:** In brief:
+
+1. Create an index to split data in training and testing sets (75/25)
+2. Split raw data set (created in section 1) using the index, this is in order to bind the target variable with the DTM
+3. Split the cleaned corpus `complaintCorpus` using the same index
+4. Create train and test DTM using the above cleaned corpus
+5. Replace 1 with all non-zero values, this is to convert data into categorical form for modeling
+6. Bind target variable to DTM
+```{r TrainTestSet}
+#Convert issue/target variable to factor, in order to conserve levels in case some categories don't appear in one of the set (highly unlikely since data is balanced)
+corpus$issue_tv<-as.factor(corpus$issue_tv)
+
+#Create an index with 75% split based on issue value in raw data
+inTrain<-createDataPartition(corpus$issue_tv,p=0.75,list=FALSE)
+
+#Subset raw data with index
+train<-corpus[inTrain,]
+
+#Subset raw data with NOT index
+test<-corpus[-inTrain,]
+
+#Subset cleaned corpus for training & test sets
+corpustrain<-complaintCorpus[inTrain]
+corpustest<-complaintCorpus[-inTrain]
+
+#Create DTM based on subsetted cleaned corpus
+dtmtrain<-DocumentTermMatrix(corpustrain, list(dictionary=freqterms))
+dtmtest<-DocumentTermMatrix(corpustest, list(dictionary=freqterms))
+
+#Function to convert non-zero values to 1
+convert_counts <- function(x) {
+  x <- ifelse(x > 0, 1, 0)
+}
+
+#Convert non-zero values to 1 in train and test DRM
+dtmtrain<- dtmtrain %>% apply(MARGIN=2,convert_counts)
+dtmtest<- dtmtest %>% apply(MARGIN=2,convert_counts)
+
+#Convert DTM to data frames
+dtmtrain<-as.data.frame(dtmtrain)
+dtmtest<-as.data.frame(dtmtest)
+
+#Bind target variable to test and train DTMs
+dtmtrain<-cbind(issue_tv=train$issue_tv,dtmtrain)
+dtmtest<-cbind(issue_tv=test$issue_tv,dtmtest)
+```
+
+#7. Complaints Classification - Supervised Learning
+**Goal:** To train a model to classify complaints as per target variable,"issue" in this case.
+
+**Process:**
+
+- Models will be built using: Naïve Bayes and Support Vector Machine (SVM) using the training set
+- Validate the models using the test sets
+- Create a Confusion Matrix and check the accuracy of the model's prediction
+
+###7.1 Naïve Bayes
+```{r fitNB}
+#Train a model based on Naive Bayes using e1017 package
+fit_NB<-naiveBayes(dtmtrain, dtmtrain$issue_tv)
+
+#Predict using Naive Bayes model using the test set
+pred_NB<-predict(fit_NB, newdata= dtmtest)
+
+#Create a confusion matrix for that model/prediction
+conf_NB<-confusionMatrix(pred_NB,dtmtest$issue_tv)
+
+```
+This model has an accuracy of:
+```{r accuracyNB}
+conf_NB$overall["Accuracy"]
+```
+That is a very low accuracy. This is most likely due to reduction in data set size. More about this in the conclusion section.
+
+###7.2 Support Vector Machine
+```{r fitSVM, warning=FALSE}
+#Train a model based on SVM in the e1017 package
+fit_SVM<-svm(issue_tv ~ ., data = dtmtrain, scale=FALSE)
+
+#Predict using Naive Bayes model using the test set
+pred_SVM<-predict(fit_SVM, newdata= dtmtest)
+
+#Create a confusion matrix for that model/prediction
+conf_SVM<-confusionMatrix(pred_SVM,dtmtest$issue_tv)
+
+```
+This model has an accuracy of:
+```{r accuracySVM}
+conf_SVM$overall["Accuracy"]
+```
+At 15% accuracy it's an improvement but still very low accuracy. More on this in the conclusion section.
+
+#8. New Complaint Classification - Unsupervised Learning
+**Goal:** To construct new issue categories ("second opinion on issues") based on the complaints corpus.
+
+**Process:** For this task, the LDA (Latent Dirichlet Allocation) algorithm will be used, since it's an unsupervised learning algorithm and the aim is to propose a new categorisation for the complaints, ignoring the existing one. LDA will automatically detect themes (in this case, a new categorisation) based on terms that exist in the corpus.
+
+After topics are created by LDA, each having a set of terms, each topic will be inspected manually, and based on the terms, a new categorisation will be proposed.
+
+Before running the training algorithm, the method requires the number of expected topics to be defined. **10** topics is proposed for the following reasons:
+
+- Setting less than 10 topics, will make the topics too broad and hard to discern
+- Setting more than 10 topics, may make the topics too detailed and loose their meaning
+- Another reason, which in ideal circumstances wouldn't have played a role, is processing time: the more topics, the longer it takes to run. Ideally, number of topics should be experimented with till there's an acceptable topic proposition.
+```{r LDA}
+#10 topics/categories
+k<-10
+
+#Run LDA algorithm
+lda<-LDA(dtm, k=10, method = "GIBBS")
+```
+Following the training, below is a plot of the 10 topics with the 10 most frequent terms:
+```{r plotLDA, echo=FALSE}
+#-----------------
+#The below code is borrowed from this site: https://www.datacamp.com/community/tutorials/ML-NLP-lyric-analysis
+#-------------------
+theme_lyrics <- function(aticks = element_blank(),
+                         pgminor = element_blank(),
+                         lt = element_blank(),
+                         lp = "none")
+{
+  theme(plot.title = element_text(hjust = 0.5), #center the title
+        axis.ticks = aticks, #set axis ticks to on or off
+        panel.grid.minor = pgminor, #turn on or off the minor grid lines
+        legend.title = lt, #turn on or off the legend title
+        legend.position = lp) #turn on or off the legend
+}
+
+word_chart <- function(data, input, title) {
+  data %>%
+  #set y = 1 to just plot one variable and use word as the label
+  ggplot(aes(as.factor(row), 1, label = input, fill = factor(topic) )) +
+  #you want the words, not the points
+  geom_point(color = "transparent") +
+  #make sure the labels don't overlap
+  geom_label_repel(nudge_x = .2,  
+                   direction = "y",
+                   box.padding = 0.1,
+                   segment.color = "transparent",
+                   size = 3) +
+  facet_grid(~topic) +
+  theme_lyrics() +
+  theme(axis.text.y = element_blank(), axis.text.x = element_blank(),
+        #axis.title.x = element_text(size = 9),
+        panel.grid = element_blank(), panel.background = element_blank(),
+        panel.border = element_rect("lightgray", fill = NA),
+        strip.text.x = element_text(size = 9)) +
+  labs(x = NULL, y = NULL, title = title) +
+    #xlab(NULL) + ylab(NULL) +
+  #ggtitle(title) +
+  coord_flip()
+}
+
+
+num_words <- 10 #number of words to visualize
+
+#create function that accepts the lda model and num word to display
+top_terms_per_topic <- function(lda_model, num_words) {
+
+  #tidy LDA object to get word, topic, and probability (beta)
+  topics_tidy <- tidy(lda_model, matrix = "beta")
+
+
+  top_terms <- topics_tidy %>%
+  group_by(topic) %>%
+  arrange(topic, desc(beta)) %>%
+  #get the top num_words PER topic
+  slice(seq_len(num_words)) %>%
+  arrange(topic, beta) %>%
+  #row is required for the word_chart() function
+  mutate(row = row_number()) %>%
+  ungroup() %>%
+  #add the word Topic to the topic labels
+  mutate(topic = paste("Topic", topic, sep = " "))
+  #create a title to pass to word_chart
+  title <- paste("LDA Top Terms for", k, "Topics")
+  #call the word_chart function you built in prep work
+  word_chart(top_terms, top_terms$term, title)
+}
+#call the function you just built!
+
+top_terms_per_topic(lda, num_words)
+```
+
+***Note:*** the code for the above plot has been borrowed from this [site][1]
+
+As per illustration above, it can be noted that there are some clear topics being identified. Below is an attempt at proposing new categories (in order of appearance as per plot above):
+
+Topic | Category
+------|---------
+Topic 1|Credit card issues
+Topic 10|Information Not Sent
+Topic 2|Not clear
+Topic 3|Not clear
+Topic 4|Mortgage issues
+Topic 5|Late payments
+Topic 6|Credit score
+Topic 7|Account balance
+Topic 8|Not clear (though references to phone calls)
+Topic 9|Not clear (though references to time and people)
+
+With better industry understanding, the above suggested categorisation can be improved further.
+
+#9. Conclusion
+This paper set out to address two challenges:
+
+- Create a complaints classifier based on issues provided in the corpus
+- Suggest a new categorisation for the complaints
+
+With regards to the first task, it proved challenging resulting in a low accuracy. The reason, most likely, is due to reducing the data set size, which was done mainly due to processing times. The data was reduced to 4% of its original size, which may have contributed to the loss of accuracy. One way to address this issue is to use Principal Component Analysis, which could have reduced the data size, and kept the same level of information. Though due to the lack of knowledge of PCA and time limitations, this wasn't implemented.
+
+As for the second challenge, attempts were more successful. Using LDA some new categories/topics started to emerge. Given more time, the corpus used for algorithm would've increased to include more example complaints; experimentation with the number of topics and analysing the results would have also improved the quality of the results.
+
+#10. Challenges
+Below are some challenges that were faced during this challenge (to keep it brief, I'm just mentioning headlines):
+
+- Processing time (conversely: my laptop's lack of processing power and the size of the data set) made it hard to experiment with different parameters and dig deeper into the problem.
+- Steep learning curve in terms of NLP. Specifically, turning the data set into a format for algorithm consumption.
+- Lack of "quality" NLP examples in R online to learn from, in contrast to Python which has many.
+
+Overall though it was a very educating and fruitful challenge to take.
+
+[1]: https://www.datacamp.com/community/tutorials/ML-NLP-lyric-analysis
