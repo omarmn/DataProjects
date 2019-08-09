@@ -1,0 +1,227 @@
+---
+title: "Defensible Spaces - Leiria"
+author: "Omar Nooreddin"
+date: "08/07/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE)
+```
+#Introduction
+This paper endeavours to identify Defensible Spaces (DS) by use of satellite imagery and areas marked for cleaning by municipalities (using KML files) coupled with use of Vegetation Indicies. Different indicies will be employed in order to decide which index will be the most suitable in identifying a DS. The premis of this assumption, is that DS will be cleared from vegetation, therefore there will be a starck contrast between the DS and the neighbouring areas. In order to carry out our analysis we're going to load a few packages to aid in the analysis:
+
+```{r loadpackages}
+#Required to read KML file
+require(rgdal) 
+
+#Required for CRS conversion
+require(sf) 
+
+#Required for converting JP2 to tiff
+require(gdalUtils)
+
+#Required for reading tiffs
+require(raster)
+```
+
+#Acquiring Satellite Images (and KML file)
+The images used for the analysis can be found [here][5] along with KML file used.
+
+####Sentinel 2 Images
+The Sentinel 2 images used, they were dated for 22/06/2019, and the tile selected was, in UTM projection: 29TNE (EPSG:4326), which contains the area described in the [KML file][5].
+
+####Landsat7 ETM+ Images
+The Landsat 7 ETM+ images used (required for NDBaI calculation), they were dated for 23/06/2019 and Level 1 was used so as to include the Thermal images of Band 6, as Level 2 doesn't include Band 6 images.
+
+#Identifying the Area
+An area was provided where a DS needs to be cleared in Leiria. We'll go ahead and load the KML file (which was originally a KMZ file that has been renamed to ".zip" and unzipped):
+```{r readKML}
+ds<-readOGR("doc.kml")
+crs(ds)
+```
+We can see that the projection of the KML file is long/lat, which is different from the Sentinel & Landsat images, which we're going to use later. As such we'll convert the projection.
+
+#Converting and Loading Sentinel Images
+Sentinel images are in JP2 format, which can't be read by the ```raster``` library. As such we'll convert the files to TIFF using the ```rgdal``` library. We're going to use bands 4 (red) & 8(NIR) to carry out our analysis. 
+```{r converting}
+#convert bands 8 and 4 into tiff
+#Band 4
+gdal_translate("S2B_MSIL1C_20190622T113329_N0207_R080_T29TNE_20190622T123903.SAFE/GRANULE/L1C_T29TNE_A011975_20190622T113327/IMG_DATA/T29TNE_20190622T113329_B04.jp2","B04sen.tif")
+
+#Band8
+gdal_translate("S2B_MSIL1C_20190622T113329_N0207_R080_T29TNE_20190622T123903.SAFE/GRANULE/L1C_T29TNE_A011975_20190622T113327/IMG_DATA/T29TNE_20190622T113329_B08.jp2","B08sen.tif")
+```
+
+#Reading the tiffs - Sentinel
+Here we'll set out to read the tiffs into R as a Raster object:
+```{r readtiff}
+#Band 4 - Sentinel 2
+band4sen<-raster("B04sen.tif")
+
+#Band 8 - Sentinel
+band8sen<-raster("B08sen.tif")
+
+crs(band8sen)
+```
+
+From the above, we can see that the projection of the tiffs is in UTM, therefore we'll convert the KML into UTM
+
+#Converting KML
+As per above, we'll convert the Coordinate Reference System (CRS) of the KML into the same projection as the tiffs from sentinel:
+```{r convertCRS}
+ds<-spTransform(ds, crs(band8sen))
+crs(ds)
+```
+Now the CRS of KML is the same as the tiff
+
+#Cropping Sentinel Images
+Since we only require the portion of the image as far as the extent of the KML file, we're going to crop the images into a smaller size to speed up our processing:
+```{r crop}
+#Crop band4 image
+band4sen<-crop(band4sen, extent(ds))
+
+#Crop band8 image
+band8sen<-crop(band8sen, extent(ds))
+```
+
+#Plot Cropped Images
+```{r plot8and4}
+
+#Set margins to zero to utilise maximum space
+par(mar=c(0,2,2,0), mfrow=c(1,2))
+
+#Now plot band 4 and 8
+plot(band4sen, main="Band 4 - Sentinel 2 (cropped)", axes=FALSE)
+plot(band8sen, main="Band 8 - Sentinel 2 (cropped)", axes=FALSE)
+```
+
+#Analysis
+
+###Visual Analysis
+In order to analyse the area provided, we're going to do the following:
+
+1. Apply an Index of our choice (NDVI, SAVI, etc...)
+2. Plot the resultant image
+3. Remove pixels below - or above, depending on index in use - a certain value in order to remove parts of the image where it's showing high vegetation and we're left only with with "bare soil" areas (i.e cleaned areas).
+4. Super impose the KML cleaning plan and check "visually" if it matches the pixels left on the screen
+
+####NDVI
+We're going to start with NDVI:
+$$NDVI=\frac{NIR-Red}{NIR+Red}$$
+
+The following are 3 plots:
+
+1. The area in question with NDVI applied too all the area
+2. The area in question after removing pixels above 0.4 (i.e more green areas removed, and we're left with less green)
+3. The area in question with KML superimposed on it
+```{r plotndvi}
+ndvi<-(band8sen-band4sen)/(band8sen+band4sen)
+ndvi_reduced<-ndvi
+ndvi_reduced[ndvi_reduced>0.4]<-NA
+par(mar=c(0,2,2,0), mfrow=c(1,3))
+plot(ndvi, axes=FALSE, main="NDVI - All",col=heat.colors(100))
+plot(ndvi_reduced, axes=FALSE, main="NDVI - With Cutoff>=0.4",col=heat.colors(100))
+plot(ndvi_reduced, axes=FALSE, main="NDVI + KML",col=heat.colors(100))
+plot(ds, add=TRUE)
+```
+
+####SAVI
+Soil Adjusted Vegetation Index: It's the same as NDVI, although the difference is the use of a brightness factor **L**, this factor helps to treat all types of soil (some are more reflective than others) the same:
+
+$$SAVI=(\frac{NIR-Red}{NIR+Red+L})*(1+L)$$
+
+The following are plots based on SAVI with brightness factor L=0.5 (default value) and cutoff at 0.4 or above:
+
+Note: Brightness factor is betweem 0 and 1, where 0 is applid for areas with a lot vegetation, effectivly rendering SAVI as NDVI. And 1 where it's a desert with no vegetation.
+```{r saviplot}
+savi<-((band8sen-band4sen)/(band8sen+band4sen+0.5))*(1+0.5)
+savi_reduced<-savi
+savi_reduced[savi_reduced>0.4]<-NA
+par(mar=c(0,2,2,0), mfrow=c(1,3))
+plot(savi, axes=FALSE, main="SAVI - All",col=heat.colors(100))
+plot(savi_reduced, axes=FALSE, main="SAVI - With Cutoff>=0.4",col=heat.colors(100))
+plot(savi_reduced, axes=FALSE, main="SAVI + KML",col=heat.colors(100))
+plot(ds, add=TRUE)
+```
+
+####MSAVI2
+An improved SAVI that gets rid of the need to identify a brightness factor **L**, therefore avoiding the need to guess the appropriate brightness factor **L**. 
+
+Note: the brightness factor **L** is the gradient of the soil line, for more information click [here][1]:
+
+$$MSAVI=\frac{(2*NIR+1-\sqrt{(2*NIR+1)^2-8*(NIR-Red)})}{2}$$
+
+The following are plots based on MSAVI2, and cutoff at 0.4 or above:
+```{r msavi2plot}
+msavi2<-(2*band8sen+1-sqrt((2*band8sen+1)^2-8*(band8sen-band4sen)))/2
+msavi2_reduced<-msavi2
+msavi2_reduced[msavi2_reduced>0.4]<-NA
+par(mar=c(0,2,2,0), mfrow=c(1,3))
+plot(msavi2, axes=FALSE, main="MSAVI2 - All",col=heat.colors(100))
+plot(msavi2_reduced, axes=FALSE, main="MSAVI2 - With Cutoff>=0.4",col=heat.colors(100))
+plot(msavi2_reduced, axes=FALSE, main="MSAVI2 + KML",col=heat.colors(100))
+plot(ds, add=TRUE)
+```
+
+####NDBaI
+Normalised Difference Barenes Index, is used to identify "bare soil", amongst other "bare soil" indices. With reference to Landsat7 ETM+ [bands][2], NDBaI can be calculated [as follows][3]:
+
+$$NDBaI=\frac{Band5-Band6}{Band5+Band6}$$
+$$Band5: Short Wave IR$$
+$$Band6: Thermal Band$$
+Calculating NDBaI through use of Landsat7, we're going to follow the same steps as Sentinel 2, with the only difference being that we don't need to convert to TIFF, as they're already in TIFF:
+
+***Note:*** Band6 of Landsat has 2 files: 6.1 and 6.2, [which are low and high gain settings][4], respectively. Usually the high gain is used for areas with more vegetation, as the thermal reflection will be less, therefore more gain is needed to amplify the signal. Whilst low gain is used for areas like desert, where thermal reflection is high. In our case, we're going to use the 6.2 (i.e high gain)
+```{r ndbai}
+#Load tiff into raster object (bands 5 & 6)
+band5lansat7<-raster("Landsat 7/LE07_L1TP_204032_20190528_20190623_01_T1/LE07_L1TP_204032_20190528_20190623_01_T1_B6_VCID_2.TIF")
+band6lansat7<-raster("Landsat 7/LE07_L1TP_204032_20190528_20190623_01_T1/LE07_L1TP_204032_20190528_20190623_01_T1_B5.TIF")
+
+#Crop images
+band5lansat7<-crop(band5lansat7, extent(ds))
+band6lansat7<-crop(band6lansat7, extent(ds))
+
+#Calculate NDBaI
+ndbai<-(band5lansat7-band6lansat7)/(band5lansat7+band6lansat7)
+
+#Now plot
+ndbai_reduced<-ndbai
+ndbai_reduced[ndbai_reduced>0.2]<-NA
+par(mar=c(0,2,2,0), mfrow=c(1,3))
+plot(ndbai, axes=FALSE, main="NDBaI - All",col=heat.colors(100))
+plot(ndbai_reduced, axes=FALSE, main="NDBaI - With Cutoff>=0.2",col=heat.colors(100))
+plot(ndbai_reduced, axes=FALSE, main="NDBaI + KML",col=heat.colors(100))
+plot(ds, add=TRUE)
+```
+
+It can be noted that resolution of Landsat7 (30m), is less than Sentinel 2 (10m).
+
+####MSAVI2 Custom/Mistake
+Basically the same MSAVI2, but I changed the "-" into "+" just before the square root, and it produced interesting results that I thought I can share here:
+
+$$MSAVI=\frac{(2*NIR+1+\sqrt{(2*NIR+1)^2-8*(NIR-Red)})}{2}$$
+Plots with cutoff at 5500:
+```{r msavi2custplot}
+msavi2cust<-(2*band8sen+1+sqrt((2*band8sen+1)^2-8*(band8sen-band4sen)))/2
+msavi2cust_reduced<-msavi2cust
+msavi2cust_reduced[msavi2cust_reduced<5500]<-NA
+par(mar=c(0,2,2,0), mfrow=c(1,3))
+plot(msavi2cust, axes=FALSE, main="MSAVI2 Custom - All",col=heat.colors(100))
+plot(msavi2cust_reduced, axes=FALSE, main="MSAVI2 Custom- With Cutoff>=0.4",col=heat.colors(100))
+plot(msavi2cust_reduced, axes=FALSE, main="MSAVI2 Custom + KML",col=heat.colors(100))
+plot(ds, add=TRUE)
+```
+
+###Statistical Analysis
+For a statisitical analysis, it is best described in [this work][6]
+
+[1]:https://wiki.landscapetoolbox.org/doku.php/remote_sensing_methods:modified_soil-adjusted_vegetation_index
+[2]: https://eos.com/landsat-7/
+[3]:https://www.researchgate.net/post/Can_someone_help_me_in_calculating_NDBaIBareness_Indexusing_LANDSAT_8_data
+[4]:https://www.researchgate.net/post/Which_bands_of_Landsat_7_61_or_62_or_both_8_10_or_11_or_both_for_LST_estimation
+[5]: https://images.app.goo.gl/uqpSY1gysmouir4v6
+[6]: http://rpubs.com/omarmn/dsfdsj

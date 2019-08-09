@@ -1,5 +1,5 @@
 ---
-title: "Measuring NDVI"
+title: "Measuring NDVI using Sentinel 2 Images"
 author: "Omar Nooreddin"
 date: "27/05/2019"
 output: html_document
